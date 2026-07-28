@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extractor de Datos - Seguimiento</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #f0f2f5; color: #1a1a1a; }
+        h1 { font-size: 20px; margin: 0 0 16px 0; color: #1a1a1a; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .row { display: flex; gap: 12px; align-items: flex-start; }
+        .row textarea { flex: 1; }
+        .btn-group { display: flex; flex-direction: column; gap: 8px; padding-top: 2px; }
+        textarea { width: 100%; height: 300px; font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 12px; padding: 12px; border: 1px solid #d1d5db; border-radius: 6px; resize: vertical; }
+        textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
+        button { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; white-space: nowrap; }
+        .btn-primary { background: #2563eb; color: #fff; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-success { background: #059669; color: #fff; }
+        .btn-success:hover { background: #047857; }
+        .btn-secondary { background: #6b7280; color: #fff; }
+        .btn-secondary:hover { background: #4b5563; }
+        button:active { transform: scale(0.97); }
+        .table-wrapper { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+        table th, table td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; }
+        table th { background: #f3f4f6; font-weight: 600; position: sticky; top: 0; z-index: 1; }
+        table th[colspan] { text-align: center; background: #e5e7eb; }
+        table td[contenteditable="true"] { background: #fff; cursor: text; }
+        table td[contenteditable="true"]:hover { background: #f9fafb; }
+        table td[contenteditable="true"]:focus { background: #fef9c3; outline: none; }
+        table tbody tr:nth-child(even) { background: #f9fafb; }
+        .row-count { font-size: 13px; color: #6b7280; margin-top: 8px; }
+        .alert { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; display: none; }
+        .alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; }
+        .alert-success { background: #f0fdf4; color: #166534; border: 1px solid #86efac; }
+        .empty-state { text-align: center; padding: 40px; color: #9ca3af; }
+        @media (max-width: 768px) { .row { flex-direction: column; } .btn-group { flex-direction: row; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Extractor de datos para seguimiento</h1>
+
+    <div class="card">
+        <div class="row">
+            <textarea id="sourceInput" placeholder="Pega aquí los datos copiados desde Excel (columnas separadas por tabulaciones)&#10;&#10;Ejemplo:&#10;N°	ESTADO	SPCO QUE VALIDA	..."></textarea>
+            <div class="btn-group">
+                <button class="btn-primary" onclick="procesar()">Procesar</button>
+                <button class="btn-success" onclick="copiar()">Copiar a Excel</button>
+                <button class="btn-secondary" onclick="limpiar()">Limpiar</button>
+            </div>
+        </div>
+        <div id="alert" class="alert"></div>
+    </div>
+
+    <div class="card">
+        <div id="outputArea">
+            <div class="empty-state">Pega los datos y presiona "Procesar"</div>
+        </div>
+        <div id="rowCount" class="row-count"></div>
+    </div>
+</div>
+
+<script>
+const COLUMN_MAP = {
+    empresa: { source: 'EMPRESA CONTRATISTA', label: 'EMPRESA' },
+    ordenTrabajo: { source: 'ORDEN DE TRABAJO', label: 'ORDEN DE TRABAJO' },
+    nombreResponsable: { source: 'RESPONSABLE DEL TRABAJO', label: 'NOMBRE RESPONSABLE' },
+    ubicacion: { source: 'ZONA ESPECIFICA', label: 'UBICACIÓN O ZONA DE TRABAJO' },
+    numPersonas: { source: 'COMENTARIOS DEL PCO', label: 'N° PERSONAS INGRESAN A VÍA' },
+    vafTren: { source: 'USO DE VAF / TREN', label: 'VAF / TREN' },
+    conductor: { source: null, label: 'CONDUCTOR', defaultValue: 'N/A' },
+    tetra: { source: 'RADIO TETRA', label: 'TETRA' },
+};
+
+function parseTSV(text) {
+    const rows = [];
+    let currentRow = [];
+    let currentField = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (char === '"') {
+            if (inQuotes && i + 1 < text.length && text[i + 1] === '"') {
+                currentField += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (char === '\t' && !inQuotes) {
+            currentRow.push(currentField);
+            currentField = '';
+        } else if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && i + 1 < text.length && text[i + 1] === '\n') i++;
+            currentRow.push(currentField);
+            currentField = '';
+            if (currentRow.length > 0 && currentRow.some(f => f.trim() !== '')) {
+                rows.push(currentRow);
+            }
+            currentRow = [];
+        } else {
+            currentField += char;
+        }
+    }
+    if (currentField || currentRow.length > 0) {
+        currentRow.push(currentField);
+        if (currentRow.some(f => f.trim() !== '')) rows.push(currentRow);
+    }
+    return rows;
+}
+
+function normalize(str) {
+    return str.trim().toUpperCase().replace(/[\s-]/g, ' ').replace(/\s+/g, ' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function findColumnIndex(headers, searchName) {
+    const target = normalize(searchName);
+    for (let i = 0; i < headers.length; i++) {
+        if (normalize(headers[i]) === target) return i;
+    }
+    for (let i = 0; i < headers.length; i++) {
+        if (normalize(headers[i]).includes(target)) return i;
+    }
+    return -1;
+}
+
+function getField(row, headers, colName) {
+    const idx = findColumnIndex(headers, colName);
+    if (idx === -1 || idx >= row.length) return '';
+    return row[idx].trim();
+}
+
+function extractPersonas(text) {
+    if (!text) return '';
+    const match = text.match(/(\d+)\s*PERSONAS?/i);
+    return match ? match[1] : '';
+}
+
+function cleanField(val) {
+    return val.replace(/^"/, '').replace(/"$/, '').trim();
+}
+
+function buildOutputTable(dataRows) {
+    const html = ['<table>'];
+
+    html.push('<thead>');
+    html.push('<tr>');
+    html.push('<th rowspan="2">N°</th>');
+    html.push('<th rowspan="2">EMPRESA</th>');
+    html.push('<th rowspan="2">ORDEN DE TRABAJO</th>');
+    html.push('<th rowspan="2">NOMBRE RESPONSABLE</th>');
+    html.push('<th rowspan="2">UBICACIÓN O ZONA DE TRABAJO</th>');
+    html.push('<th rowspan="2">N° PERSONAS INGRESAN A VÍA</th>');
+    html.push('<th rowspan="2">VAF / TREN</th>');
+    html.push('<th rowspan="2">CONDUCTOR</th>');
+    html.push('<th rowspan="2">TETRA</th>');
+    html.push('<th colspan="2">PROTECCIÓN APLICADA</th>');
+    html.push('<th colspan="3">VÍA LIBRE</th>');
+    html.push('</tr>');
+    html.push('<tr>');
+    html.push('<th>COMANDO</th>');
+    html.push('<th>COMENTARIO</th>');
+    html.push('<th>STATUS</th>');
+    html.push('<th>HORA INICIO</th>');
+    html.push('<th>HORA FIN</th>');
+    html.push('</tr>');
+    html.push('</thead>');
+
+    html.push('<tbody>');
+    dataRows.forEach(function(r, i) {
+        html.push('<tr>');
+        html.push('<td>' + (i + 1) + '</td>');
+        html.push('<td>' + escHtml(r.empresa) + '</td>');
+        html.push('<td>' + escHtml(r.ordenTrabajo) + '</td>');
+        html.push('<td>' + escHtml(r.nombreResponsable) + '</td>');
+        html.push('<td>' + escHtml(r.ubicacion) + '</td>');
+        html.push('<td>' + escHtml(r.numPersonas) + '</td>');
+        html.push('<td>' + escHtml(r.vafTren) + '</td>');
+        html.push('<td contenteditable="true">' + escHtml(r.conductor) + '</td>');
+        html.push('<td>' + escHtml(r.tetra) + '</td>');
+        html.push('<td contenteditable="true">N/A</td>');
+        html.push('<td contenteditable="true">N/A</td>');
+        html.push('<td contenteditable="true">NO</td>');
+        html.push('<td contenteditable="true"></td>');
+        html.push('<td contenteditable="true"></td>');
+        html.push('</tr>');
+    });
+    html.push('</tbody>');
+    html.push('</table>');
+
+    return html.join('');
+}
+
+function escHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function procesar() {
+    const input = document.getElementById('sourceInput').value.trim();
+    const alertEl = document.getElementById('alert');
+    alertEl.style.display = 'none';
+
+    if (!input) {
+        showAlert('Pega los datos copiados desde Excel.', 'error');
+        return;
+    }
+
+    const parsed = parseTSV(input);
+    if (parsed.length < 2) {
+        showAlert('No se encontraron datos. Asegúrate de que el texto incluya una fila de encabezados y al menos una fila de datos.', 'error');
+        return;
+    }
+
+    const headers = parsed[0];
+    const dataRows = [];
+
+    for (let i = 1; i < parsed.length; i++) {
+        const row = parsed[i];
+        const item = {};
+
+        for (const key in COLUMN_MAP) {
+            const map = COLUMN_MAP[key];
+            if (map.source === null) {
+                item[key] = map.defaultValue || '';
+            } else {
+                let val = getField(row, headers, map.source);
+                val = cleanField(val);
+                if (key === 'numPersonas') {
+                    val = extractPersonas(val);
+                }
+                item[key] = val;
+            }
+        }
+
+        if (item.empresa || item.ordenTrabajo) {
+            dataRows.push(item);
+        }
+    }
+
+    if (dataRows.length === 0) {
+        showAlert('No se pudieron extraer datos. Revisa que los encabezados coincidan con el formato esperado.', 'error');
+        return;
+    }
+
+    const outputArea = document.getElementById('outputArea');
+    outputArea.innerHTML = buildOutputTable(dataRows);
+    document.getElementById('rowCount').textContent = dataRows.length + ' fila(s) extraída(s).';
+    showAlert('Datos procesados correctamente. Puedes editar las celdas con fondo blanco y luego copiar a Excel.', 'success');
+}
+
+function copiar() {
+    const tbody = document.querySelector('tbody');
+    if (!tbody) {
+        showAlert('No hay datos para copiar. Procesa los datos primero.', 'error');
+        return;
+    }
+
+    const rows = tbody.querySelectorAll('tr');
+    const tsvLines = [];
+
+    rows.forEach(function(row) {
+        const cells = row.querySelectorAll('td');
+        const line = [];
+        cells.forEach(function(cell, idx) {
+            if (idx === 0) return;
+            let val = cell.innerText.trim();
+            if (val.includes('\t') || val.includes('\n') || val.includes('"')) {
+                val = '"' + val.replace(/"/g, '""') + '"';
+            }
+            line.push(val);
+        });
+        tsvLines.push(line.join('\t'));
+    });
+
+    const tsv = tsvLines.join('\n');
+    navigator.clipboard.writeText(tsv).then(function() {
+        showAlert('Datos copiados al portapapeles. Pégalos en Excel (Ctrl+V / Cmd+V) - solo las filas de datos, sin encabezados.', 'success');
+    }).catch(function() {
+        const ta = document.createElement('textarea');
+        ta.value = tsv;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showAlert('Datos copiados al portapapeles.', 'success');
+    });
+}
+
+function limpiar() {
+    document.getElementById('sourceInput').value = '';
+    document.getElementById('outputArea').innerHTML = '<div class="empty-state">Pega los datos y presiona "Procesar"</div>';
+    document.getElementById('rowCount').textContent = '';
+    document.getElementById('alert').style.display = 'none';
+}
+
+function showAlert(msg, type) {
+    const el = document.getElementById('alert');
+    el.textContent = msg;
+    el.className = 'alert alert-' + type;
+    el.style.display = 'block';
+}
+</script>
+</body>
+</html>
